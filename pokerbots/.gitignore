@@ -1,0 +1,22 @@
+# Generated during tournament runs — never commit these
+logs/
+tournament.db
+*.db
+
+# Engine player output logs
+engine/*.txt
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# macOS
+.DS_Store
+
+# Editors
+.vscode/
+.idea/
+*.swp

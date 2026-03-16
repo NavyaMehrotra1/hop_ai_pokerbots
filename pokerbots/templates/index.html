@@ -1,0 +1,476 @@
+{% extends "base.html" %}
+
+{% block title %}HopAI Pokerbots — Dashboard{% endblock %}
+
+{% block content %}
+
+<!-- ── Header ──────────────────────────────────────────────────── -->
+<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
+  <div>
+    <h1 class="text-2xl font-bold text-white">Tournament Dashboard</h1>
+    <p class="text-[#8b949e] text-sm mt-1">Round-robin · 1 000 hands per match</p>
+  </div>
+
+  <!-- Status badge -->
+  <div id="status-badge" class="flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium
+       {% if state.status == 'running' %}badge-running
+       {% elif state.status == 'complete' %}badge-complete
+       {% else %}badge-idle{% endif %}">
+    {% if state.status == 'running' %}
+      <span class="w-2 h-2 rounded-full bg-yellow-400 pulse-dot"></span> Running
+    {% elif state.status == 'complete' %}
+      <span class="w-2 h-2 rounded-full bg-green-500"></span> Complete
+    {% else %}
+      <span class="w-2 h-2 rounded-full bg-[#6e7681]"></span> Idle
+    {% endif %}
+  </div>
+</div>
+
+<!-- ── Stat Cards ──────────────────────────────────────────────── -->
+<div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
+  <div class="card p-4">
+    <div class="text-[#6e7681] text-xs font-medium uppercase tracking-wider mb-1">Bots</div>
+    <div id="stat-bots" class="text-2xl font-bold text-white">{{ bot_count }}</div>
+  </div>
+  <div class="card p-4">
+    <div class="text-[#6e7681] text-xs font-medium uppercase tracking-wider mb-1">Matches</div>
+    <div id="stat-matches" class="text-2xl font-bold text-white">
+      {{ state.completed_matches }} <span class="text-[#6e7681] text-base font-normal">/ {{ state.total_matches }}</span>
+    </div>
+  </div>
+  <div class="card p-4">
+    <div class="text-[#6e7681] text-xs font-medium uppercase tracking-wider mb-1">Leader</div>
+    <div id="stat-leader" class="text-xl font-bold text-white truncate">
+      {% if leaderboard %}{{ leaderboard[0].name }}{% else %}—{% endif %}
+    </div>
+  </div>
+  <div class="card p-4">
+    <div class="text-[#6e7681] text-xs font-medium uppercase tracking-wider mb-1">Top Delta</div>
+    <div id="stat-delta" class="text-2xl font-bold
+      {% if leaderboard and leaderboard[0].total_delta > 0 %}chip-pos
+      {% elif leaderboard and leaderboard[0].total_delta < 0 %}chip-neg
+      {% else %}text-white{% endif %}">
+      {% if leaderboard %}{{ '%+d' % leaderboard[0].total_delta }}{% else %}—{% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- ── Progress Bar (visible when running) ────────────────────── -->
+<div id="progress-section"
+     class="card p-4 mb-8 {% if state.status != 'running' %}hidden{% endif %}">
+  <div class="flex items-center justify-between mb-2">
+    <span class="text-sm font-medium text-[#e6edf3]">Tournament Progress</span>
+    <span id="progress-label" class="text-sm text-[#8b949e]">
+      {{ state.completed_matches }} / {{ state.total_matches }} matches
+    </span>
+  </div>
+  <div class="w-full bg-[#21262d] rounded-full h-2.5 overflow-hidden">
+    <div id="progress-bar"
+         class="progress-shimmer h-2.5 rounded-full transition-all duration-500"
+         style="width: {% if state.total_matches > 0 %}{{ (state.completed_matches / state.total_matches * 100)|int }}{% else %}0{% endif %}%">
+    </div>
+  </div>
+</div>
+
+<!-- ── Controls ────────────────────────────────────────────────── -->
+<div class="card p-5 mb-8">
+  <div class="flex flex-col sm:flex-row sm:items-center gap-4">
+    <div class="flex-1">
+      <div class="text-sm font-medium text-[#e6edf3] mb-0.5">Run Tournament</div>
+      <div class="text-xs text-[#6e7681]">
+        Discovers all bots in <code class="bg-[#21262d] px-1 rounded text-[#7ee787]">bots/</code> and
+        runs every pair twice. Rankings by net chips won.
+      </div>
+    </div>
+    <div class="flex items-center gap-3">
+      <button id="btn-start" onclick="startTournament()"
+              {% if state.status == 'running' %}disabled{% endif %}
+              class="btn-green flex items-center gap-2">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5"
+                d="M5 3l14 9-14 9V3z"/>
+        </svg>
+        Start Tournament
+      </button>
+      <button id="btn-reset" onclick="resetTournament()"
+              {% if state.status == 'running' %}disabled{% endif %}
+              class="btn-red">
+        Reset
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Main Content Grid ───────────────────────────────────────── -->
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+  <!-- Leaderboard (2/3) -->
+  <div class="lg:col-span-2">
+    <div class="card overflow-hidden">
+      <div class="px-5 py-4 border-b border-[#21262d] flex items-center justify-between">
+        <h2 class="font-semibold text-white flex items-center gap-2">
+          <span>🏆</span> Leaderboard
+        </h2>
+        <span class="text-xs text-[#6e7681]">by net chips</span>
+      </div>
+
+      <div id="leaderboard-container">
+        {% if leaderboard %}
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="border-b border-[#21262d]">
+              <th class="text-left px-5 py-3 text-[#6e7681] font-medium text-xs uppercase tracking-wider w-10">#</th>
+              <th class="text-left px-5 py-3 text-[#6e7681] font-medium text-xs uppercase tracking-wider">Bot</th>
+              <th class="text-center px-3 py-3 text-[#6e7681] font-medium text-xs uppercase tracking-wider">W</th>
+              <th class="text-center px-3 py-3 text-[#6e7681] font-medium text-xs uppercase tracking-wider">L</th>
+              <th class="text-center px-3 py-3 text-[#6e7681] font-medium text-xs uppercase tracking-wider">D</th>
+              <th class="text-center px-3 py-3 text-[#6e7681] font-medium text-xs uppercase tracking-wider">Win%</th>
+              <th class="text-right px-5 py-3 text-[#6e7681] font-medium text-xs uppercase tracking-wider">Net Chips</th>
+            </tr>
+          </thead>
+          <tbody id="leaderboard-body">
+            {% for bot in leaderboard %}
+            <tr class="trow border-b border-[#21262d] last:border-0">
+              <td class="px-5 py-3.5 text-center">
+                {% if loop.index == 1 %}
+                  <span class="text-base rank-gold">🥇</span>
+                {% elif loop.index == 2 %}
+                  <span class="text-base rank-silver">🥈</span>
+                {% elif loop.index == 3 %}
+                  <span class="text-base rank-bronze">🥉</span>
+                {% else %}
+                  <span class="text-[#6e7681] font-mono text-xs">{{ loop.index }}</span>
+                {% endif %}
+              </td>
+              <td class="px-5 py-3.5">
+                <div class="flex items-center gap-2.5">
+                  <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-[#0d1117]"
+                       style="background: {{ ['#22c55e','#3b82f6','#f59e0b','#a855f7','#ec4899','#14b8a6','#f97316','#84cc16'][loop.index0 % 8] }}">
+                    {{ bot.name[0].upper() }}
+                  </div>
+                  <span class="font-medium text-[#e6edf3]">{{ bot.name }}</span>
+                </div>
+              </td>
+              <td class="px-3 py-3.5 text-center text-green-400 font-mono">{{ bot.wins }}</td>
+              <td class="px-3 py-3.5 text-center text-red-400 font-mono">{{ bot.losses }}</td>
+              <td class="px-3 py-3.5 text-center text-[#8b949e] font-mono">{{ bot.draws }}</td>
+              <td class="px-3 py-3.5 text-center">
+                <span class="font-mono text-[#e6edf3]">{{ bot.win_rate }}%</span>
+              </td>
+              <td class="px-5 py-3.5 text-right">
+                <div class="flex items-center justify-end gap-3">
+                  <!-- Mini bar -->
+                  <div class="hidden sm:block w-20 h-1.5 bg-[#21262d] rounded-full overflow-hidden">
+                    {% set max_delta = leaderboard[0].total_delta if leaderboard[0].total_delta != 0 else 1 %}
+                    {% set pct = [(bot.total_delta / max_delta * 100), 0] | max | int %}
+                    <div class="h-full rounded-full {% if bot.total_delta >= 0 %}bg-green-500{% else %}bg-red-500{% endif %}"
+                         style="width: {{ pct }}%"></div>
+                  </div>
+                  <span class="font-mono font-semibold {% if bot.total_delta > 0 %}chip-pos{% elif bot.total_delta < 0 %}chip-neg{% else %}chip-zero{% endif %}">
+                    {{ '%+d' % bot.total_delta }}
+                  </span>
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <div id="leaderboard-empty" class="px-5 py-12 text-center">
+          <div class="text-4xl mb-3">♠</div>
+          <div class="text-[#6e7681] text-sm">No results yet. Start a tournament to see rankings.</div>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Recent Matches (1/3) -->
+  <div>
+    <div class="card overflow-hidden">
+      <div class="px-5 py-4 border-b border-[#21262d]">
+        <h2 class="font-semibold text-white flex items-center gap-2">
+          <span>🃏</span> Recent Matches
+        </h2>
+      </div>
+
+      <div id="matches-container" class="divide-y divide-[#21262d]">
+        {% if matches %}
+          {% for match in matches %}
+          <a href="/match/{{ match.id }}"
+             class="flex flex-col gap-1 px-5 py-3.5 hover:bg-[#1c2333] transition-colors block no-underline">
+            <div class="flex items-center justify-between gap-2">
+              <div class="flex items-center gap-1.5 text-sm font-medium text-[#e6edf3] truncate">
+                <span class="truncate">{{ match.bot1 }}</span>
+                <span class="text-[#6e7681] shrink-0">vs</span>
+                <span class="truncate">{{ match.bot2 }}</span>
+              </div>
+              <span class="shrink-0 text-xs px-1.5 py-0.5 rounded font-medium
+                {% if match.status == 'complete' %}badge-complete
+                {% elif match.status == 'running' %}badge-running
+                {% elif match.status == 'error' %}badge-error
+                {% else %}badge-pending{% endif %}">
+                {{ match.status }}
+              </span>
+            </div>
+            {% if match.winner %}
+            <div class="text-xs text-[#8b949e]">
+              <span class="text-green-400 font-medium">{{ match.winner }}</span> wins
+              {% if match.bot1_delta is not none %}
+                · <span class="chip-pos">{{ '%+d' % match.bot1_delta }}</span>
+                  <span class="text-[#6e7681]">/</span>
+                  <span class="chip-neg">{{ '%+d' % match.bot2_delta }}</span>
+              {% endif %}
+            </div>
+            {% elif match.status == 'complete' %}
+            <div class="text-xs text-[#8b949e]">Draw</div>
+            {% elif match.status == 'error' %}
+            <div class="text-xs text-red-400">Engine error</div>
+            {% endif %}
+          </a>
+          {% endfor %}
+        {% else %}
+        <div id="matches-empty" class="px-5 py-10 text-center text-[#6e7681] text-sm">
+          No matches yet.
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+
+{% block scripts %}
+<script>
+  const IS_RUNNING = {{ 'true' if state.status == 'running' else 'false' }};
+  let polling = IS_RUNNING;
+  let pollInterval = null;
+
+  // ── API helpers ────────────────────────────────────────────────
+  async function startTournament() {
+    document.getElementById('btn-start').disabled = true;
+    try {
+      const res = await fetch('/api/start', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) { showToast(data.error, 'error'); document.getElementById('btn-start').disabled = false; return; }
+      showToast(`Tournament started — ${data.bot_count} bots`, 'success');
+      startPolling();
+    } catch (e) {
+      showToast('Failed to start tournament', 'error');
+      document.getElementById('btn-start').disabled = false;
+    }
+  }
+
+  async function resetTournament() {
+    if (!confirm('Reset all match results and stats?')) return;
+    try {
+      const res = await fetch('/api/reset', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) { showToast(data.error, 'error'); return; }
+      showToast('Tournament reset', 'info');
+      setTimeout(() => location.reload(), 600);
+    } catch (e) {
+      showToast('Failed to reset', 'error');
+    }
+  }
+
+  // ── DOM update helpers ─────────────────────────────────────────
+  const COLORS = ['#22c55e','#3b82f6','#f59e0b','#a855f7','#ec4899','#14b8a6','#f97316','#84cc16'];
+
+  function medalIcon(rank) {
+    if (rank === 1) return '<span class="text-base rank-gold">🥇</span>';
+    if (rank === 2) return '<span class="text-base rank-silver">🥈</span>';
+    if (rank === 3) return '<span class="text-base rank-bronze">🥉</span>';
+    return `<span class="text-[#6e7681] font-mono text-xs">${rank}</span>`;
+  }
+
+  function deltaClass(v) {
+    return v > 0 ? 'chip-pos' : v < 0 ? 'chip-neg' : 'chip-zero';
+  }
+
+  function statusBadgeClass(s) {
+    return { complete:'badge-complete', running:'badge-running', error:'badge-error', pending:'badge-pending' }[s] || 'badge-pending';
+  }
+
+  function updateLeaderboard(rows) {
+    const tbody = document.getElementById('leaderboard-body');
+    const empty = document.getElementById('leaderboard-empty');
+
+    if (!rows.length) {
+      if (tbody) tbody.innerHTML = '';
+      if (empty) empty.classList.remove('hidden');
+      return;
+    }
+    if (empty) empty.classList.add('hidden');
+
+    const maxDelta = rows[0].total_delta || 1;
+
+    if (!tbody) {
+      // First render — replace entire container
+      document.getElementById('leaderboard-container').innerHTML = `
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="border-b border-[#21262d]">
+              <th class="text-left px-5 py-3 text-[#6e7681] font-medium text-xs uppercase tracking-wider w-10">#</th>
+              <th class="text-left px-5 py-3 text-[#6e7681] font-medium text-xs uppercase tracking-wider">Bot</th>
+              <th class="text-center px-3 py-3 text-[#6e7681] font-medium text-xs uppercase tracking-wider">W</th>
+              <th class="text-center px-3 py-3 text-[#6e7681] font-medium text-xs uppercase tracking-wider">L</th>
+              <th class="text-center px-3 py-3 text-[#6e7681] font-medium text-xs uppercase tracking-wider">D</th>
+              <th class="text-center px-3 py-3 text-[#6e7681] font-medium text-xs uppercase tracking-wider">Win%</th>
+              <th class="text-right px-5 py-3 text-[#6e7681] font-medium text-xs uppercase tracking-wider">Net Chips</th>
+            </tr>
+          </thead>
+          <tbody id="leaderboard-body"></tbody>
+        </table>`;
+    }
+
+    const newTbody = document.getElementById('leaderboard-body');
+    newTbody.innerHTML = rows.map((bot, i) => {
+      const rank = i + 1;
+      const pct = maxDelta ? Math.max(0, Math.round(bot.total_delta / maxDelta * 100)) : 0;
+      const barColor = bot.total_delta >= 0 ? 'bg-green-500' : 'bg-red-500';
+      return `
+        <tr class="trow border-b border-[#21262d] last:border-0">
+          <td class="px-5 py-3.5 text-center">${medalIcon(rank)}</td>
+          <td class="px-5 py-3.5">
+            <div class="flex items-center gap-2.5">
+              <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-[#0d1117]"
+                   style="background:${COLORS[i % COLORS.length]}">
+                ${bot.name[0].toUpperCase()}
+              </div>
+              <span class="font-medium text-[#e6edf3]">${bot.name}</span>
+            </div>
+          </td>
+          <td class="px-3 py-3.5 text-center text-green-400 font-mono">${bot.wins}</td>
+          <td class="px-3 py-3.5 text-center text-red-400 font-mono">${bot.losses}</td>
+          <td class="px-3 py-3.5 text-center text-[#8b949e] font-mono">${bot.draws}</td>
+          <td class="px-3 py-3.5 text-center"><span class="font-mono text-[#e6edf3]">${bot.win_rate}%</span></td>
+          <td class="px-5 py-3.5 text-right">
+            <div class="flex items-center justify-end gap-3">
+              <div class="hidden sm:block w-20 h-1.5 bg-[#21262d] rounded-full overflow-hidden">
+                <div class="h-full rounded-full ${barColor}" style="width:${pct}%"></div>
+              </div>
+              <span class="font-mono font-semibold ${deltaClass(bot.total_delta)}">
+                ${bot.total_delta >= 0 ? '+' : ''}${bot.total_delta}
+              </span>
+            </div>
+          </td>
+        </tr>`;
+    }).join('');
+  }
+
+  function updateMatches(matches) {
+    const container = document.getElementById('matches-container');
+    if (!matches.length) {
+      container.innerHTML = '<div class="px-5 py-10 text-center text-[#6e7681] text-sm">No matches yet.</div>';
+      return;
+    }
+    container.innerHTML = matches.map(m => {
+      let detail = '';
+      if (m.winner) {
+        const d1 = m.bot1_delta !== null ? `<span class="chip-pos">${m.bot1_delta >= 0 ? '+' : ''}${m.bot1_delta}</span><span class="text-[#6e7681]">/</span><span class="chip-neg">${m.bot2_delta >= 0 ? '+' : ''}${m.bot2_delta}</span>` : '';
+        detail = `<div class="text-xs text-[#8b949e]"><span class="text-green-400 font-medium">${m.winner}</span> wins${d1 ? ' · ' + d1 : ''}</div>`;
+      } else if (m.status === 'complete') {
+        detail = `<div class="text-xs text-[#8b949e]">Draw</div>`;
+      } else if (m.status === 'error') {
+        detail = `<div class="text-xs text-red-400">Engine error</div>`;
+      }
+      return `
+        <a href="/match/${m.id}"
+           class="flex flex-col gap-1 px-5 py-3.5 hover:bg-[#1c2333] transition-colors block no-underline">
+          <div class="flex items-center justify-between gap-2">
+            <div class="flex items-center gap-1.5 text-sm font-medium text-[#e6edf3] truncate">
+              <span class="truncate">${m.bot1}</span>
+              <span class="text-[#6e7681] shrink-0">vs</span>
+              <span class="truncate">${m.bot2}</span>
+            </div>
+            <span class="shrink-0 text-xs px-1.5 py-0.5 rounded font-medium ${statusBadgeClass(m.status)}">
+              ${m.status}
+            </span>
+          </div>
+          ${detail}
+        </a>`;
+    }).join('');
+  }
+
+  function updateStatusBadge(status) {
+    const el = document.getElementById('status-badge');
+    el.className = `flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium badge-${status}`;
+    const dot = status === 'running'
+      ? '<span class="w-2 h-2 rounded-full bg-yellow-400 pulse-dot"></span> Running'
+      : status === 'complete'
+      ? '<span class="w-2 h-2 rounded-full bg-green-500"></span> Complete'
+      : '<span class="w-2 h-2 rounded-full bg-[#6e7681]"></span> Idle';
+    el.innerHTML = dot;
+  }
+
+  function updateProgress(state) {
+    const section = document.getElementById('progress-section');
+    const bar = document.getElementById('progress-bar');
+    const label = document.getElementById('progress-label');
+    if (state.status === 'running') {
+      section.classList.remove('hidden');
+      const pct = state.total_matches > 0
+        ? Math.round(state.completed_matches / state.total_matches * 100) : 0;
+      bar.style.width = pct + '%';
+      label.textContent = `${state.completed_matches} / ${state.total_matches} matches`;
+    } else {
+      section.classList.add('hidden');
+    }
+  }
+
+  function updateStats(data) {
+    document.getElementById('stat-bots').textContent = data.bot_count;
+    document.getElementById('stat-matches').innerHTML =
+      `${data.state.completed_matches} <span class="text-[#6e7681] text-base font-normal">/ ${data.state.total_matches}</span>`;
+    if (data.leaderboard.length) {
+      const top = data.leaderboard[0];
+      document.getElementById('stat-leader').textContent = top.name;
+      const deltaEl = document.getElementById('stat-delta');
+      deltaEl.textContent = (top.total_delta >= 0 ? '+' : '') + top.total_delta;
+      deltaEl.className = `text-2xl font-bold ${deltaClass(top.total_delta)}`;
+    }
+  }
+
+  // ── Polling ────────────────────────────────────────────────────
+  async function poll() {
+    try {
+      const res = await fetch('/api/status');
+      const data = await res.json();
+
+      updateStatusBadge(data.state.status);
+      updateProgress(data.state);
+      updateStats(data);
+      updateLeaderboard(data.leaderboard);
+      updateMatches(data.recent_matches);
+
+      const startBtn = document.getElementById('btn-start');
+      const resetBtn = document.getElementById('btn-reset');
+      startBtn.disabled = data.state.status === 'running';
+      resetBtn.disabled = data.state.status === 'running';
+
+      if (data.state.status !== 'running') {
+        stopPolling();
+        if (data.state.status === 'complete') {
+          showToast('Tournament complete!', 'success');
+        }
+      }
+    } catch (e) { /* ignore transient fetch errors */ }
+  }
+
+  function startPolling() {
+    if (pollInterval) return;
+    pollInterval = setInterval(poll, 2500);
+    poll();
+  }
+
+  function stopPolling() {
+    if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+    polling = false;
+  }
+
+  if (polling) startPolling();
+</script>
+{% endblock %}

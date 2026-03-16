@@ -1,0 +1,477 @@
+{% extends "base.html" %}
+
+{% block title %}Match #{{ match.id }} — HopAI Pokerbots{% endblock %}
+
+{% block nav_extra %}
+<a href="/" class="text-[#8b949e] hover:text-white text-sm transition-colors flex items-center gap-1.5">
+  ← Dashboard
+</a>
+{% endblock %}
+
+{% block content %}
+
+<!-- ── Breadcrumb ──────────────────────────────────────────────── -->
+<div class="flex items-center gap-2 text-[#6e7681] text-sm mb-4">
+  <a href="/" class="hover:text-white transition-colors">Dashboard</a>
+  <span>/</span>
+  <span class="text-[#e6edf3]">Match #{{ match.id }}</span>
+  {% if match.status == 'running' %}
+  <span class="ml-2 flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs badge-running">
+    <span class="w-1.5 h-1.5 rounded-full bg-yellow-400 pulse-dot"></span> LIVE
+  </span>
+  {% endif %}
+</div>
+
+<!-- ── VS Header ──────────────────────────────────────────────── -->
+<div class="card p-6 mb-6" id="match-header">
+  <div class="flex flex-col sm:flex-row items-center justify-between gap-6">
+
+    <!-- Bot 1 -->
+    <div class="flex flex-col items-center sm:items-start gap-2 flex-1 text-center sm:text-left">
+      <div class="w-14 h-14 rounded-full flex items-center justify-center text-2xl font-bold text-[#0d1117]"
+           style="background:#22c55e">{{ match.bot1[0].upper() }}</div>
+      <div>
+        <div class="text-xl font-bold text-white">{{ match.bot1 }}</div>
+        <div id="delta1" class="text-2xl font-bold mt-1
+          {% if match.bot1_delta is not none %}
+            {% if match.bot1_delta > 0 %}chip-pos{% elif match.bot1_delta < 0 %}chip-neg{% else %}chip-zero{% endif %}
+          {% else %}text-[#6e7681]{% endif %}">
+          {% if match.bot1_delta is not none %}{{ '%+d' % match.bot1_delta }} chips{% else %}—{% endif %}
+        </div>
+      </div>
+    </div>
+
+    <!-- Center -->
+    <div class="flex flex-col items-center gap-2 min-w-[140px]">
+      <div class="text-[#6e7681] font-bold text-lg">VS</div>
+      <div id="result-badge">
+        {% if match.status == 'complete' %}
+          {% if match.winner %}
+          <div class="px-4 py-2 rounded-lg text-sm font-semibold badge-complete">{{ match.winner }} wins</div>
+          {% else %}
+          <div class="px-4 py-2 rounded-lg text-sm font-semibold badge-idle">Draw</div>
+          {% endif %}
+        {% elif match.status == 'running' %}
+        <div class="px-4 py-2 rounded-lg text-sm font-semibold badge-running flex items-center gap-2">
+          <span class="w-2 h-2 rounded-full bg-yellow-400 pulse-dot"></span> In progress
+        </div>
+        {% elif match.status == 'error' %}
+        <div class="px-4 py-2 rounded-lg text-sm font-semibold badge-error">Engine error</div>
+        {% else %}
+        <div class="px-4 py-2 rounded-lg text-sm font-semibold badge-pending">Pending</div>
+        {% endif %}
+      </div>
+      <div id="rounds-played" class="text-xs text-[#6e7681]">
+        {% if match.num_rounds %}{{ match.num_rounds }} rounds{% endif %}
+      </div>
+    </div>
+
+    <!-- Bot 2 -->
+    <div class="flex flex-col items-center sm:items-end gap-2 flex-1 text-center sm:text-right">
+      <div class="w-14 h-14 rounded-full flex items-center justify-center text-2xl font-bold text-[#0d1117]"
+           style="background:#3b82f6">{{ match.bot2[0].upper() }}</div>
+      <div>
+        <div class="text-xl font-bold text-white">{{ match.bot2 }}</div>
+        <div id="delta2" class="text-2xl font-bold mt-1
+          {% if match.bot2_delta is not none %}
+            {% if match.bot2_delta > 0 %}chip-pos{% elif match.bot2_delta < 0 %}chip-neg{% else %}chip-zero{% endif %}
+          {% else %}text-[#6e7681]{% endif %}">
+          {% if match.bot2_delta is not none %}{{ '%+d' % match.bot2_delta }} chips{% else %}—{% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Meta row ───────────────────────────────────────────────── -->
+<div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+  <div class="card-sm p-4">
+    <div class="text-[#6e7681] text-xs uppercase tracking-wider mb-1">Match ID</div>
+    <div class="font-mono font-semibold text-white">#{{ match.id }}</div>
+  </div>
+  <div class="card-sm p-4">
+    <div class="text-[#6e7681] text-xs uppercase tracking-wider mb-1">Status</div>
+    <div id="status-cell">
+      <span class="px-2 py-0.5 rounded text-xs font-medium
+        {% if match.status == 'complete' %}badge-complete
+        {% elif match.status == 'running' %}badge-running
+        {% elif match.status == 'error' %}badge-error
+        {% else %}badge-pending{% endif %}">{{ match.status }}</span>
+    </div>
+  </div>
+  <div class="card-sm p-4">
+    <div class="text-[#6e7681] text-xs uppercase tracking-wider mb-1">Rounds</div>
+    <div id="rounds-cell" class="font-mono font-semibold text-white">{{ match.num_rounds or '—' }}</div>
+  </div>
+  <div class="card-sm p-4">
+    <div class="text-[#6e7681] text-xs uppercase tracking-wider mb-1">Completed</div>
+    <div class="font-mono text-sm text-white truncate">
+      {% if match.completed_at %}{{ match.completed_at[:16].replace('T',' ') }}{% else %}—{% endif %}
+    </div>
+  </div>
+</div>
+
+
+<!-- ══════════════════════════════════════════════════════════════
+     LIVE VIEW (shown only while status == running)
+═══════════════════════════════════════════════════════════════════ -->
+<div id="live-section" class="{% if match.status != 'running' %}hidden{% endif %}">
+  <div class="card p-8 mb-6 flex flex-col items-center gap-5 text-center">
+    <!-- Animated cards -->
+    <div class="flex gap-3 text-4xl" id="card-anim">♠ ♥ ♦ ♣</div>
+    <div>
+      <div class="text-white font-semibold text-lg">Match in progress</div>
+      <div class="text-[#8b949e] text-sm mt-1">
+        Playing 1 000 hands · results will appear automatically
+      </div>
+    </div>
+    <!-- Elapsed timer -->
+    <div class="flex items-center gap-2 text-[#6e7681] text-sm">
+      <span class="w-2 h-2 rounded-full bg-yellow-400 pulse-dot"></span>
+      Elapsed: <span id="elapsed-time" class="font-mono text-[#e6edf3]">0s</span>
+    </div>
+    <!-- Recent log tail (last 6 lines) -->
+    <div id="live-log-tail"
+         class="w-full max-w-lg bg-[#0d1117] rounded-lg p-4 font-mono text-xs text-left
+                leading-relaxed border border-[#21262d] min-h-[80px] text-[#6e7681]">
+      Waiting for engine output…
+    </div>
+  </div>
+</div>
+
+
+<!-- ══════════════════════════════════════════════════════════════
+     COMPLETE VIEW (bankroll chart + log)
+═══════════════════════════════════════════════════════════════════ -->
+<div id="complete-section" class="{% if match.status == 'running' or not log_content %}hidden{% endif %}">
+
+  <!-- Bankroll trajectory chart -->
+  <div class="card overflow-hidden mb-6">
+    <div class="px-5 py-4 border-b border-[#21262d] flex items-center justify-between">
+      <h2 class="font-semibold text-white flex items-center gap-2">
+        <span>📈</span> Bankroll Trajectory
+      </h2>
+      <span class="text-xs text-[#6e7681]">cumulative chips per round</span>
+    </div>
+    <div class="p-5">
+      <canvas id="bankroll-chart" height="220"></canvas>
+    </div>
+  </div>
+
+  <!-- Game Log -->
+  <div class="card overflow-hidden">
+    <div class="px-5 py-4 border-b border-[#21262d] flex items-center justify-between">
+      <h2 class="font-semibold text-white flex items-center gap-2">
+        <span>📋</span> Game Log
+      </h2>
+      <div class="flex items-center gap-2">
+        <button onclick="toggleFilter()" id="filter-btn" class="btn-ghost text-xs py-1.5 px-3">
+          Show full log
+        </button>
+        <button onclick="copyLog()" class="btn-ghost text-xs py-1.5 px-3">Copy</button>
+      </div>
+    </div>
+    <div id="log-viewer" class="font-mono text-xs leading-relaxed overflow-auto p-5"
+         style="max-height:560px; background:#0d1117;">
+      <div id="log-lines"></div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Error / pending fallback -->
+{% if match.status == 'error' %}
+<div class="card p-8 text-center text-red-400 text-sm">
+  Engine error — no log available. Check that the bot's <code>commands.json</code> is correct.
+</div>
+{% elif match.status == 'pending' %}
+<div class="card p-8 text-center text-[#6e7681] text-sm">
+  Match hasn't started yet.
+</div>
+{% endif %}
+
+
+<!-- Inject raw log for JS -->
+{% if log_content %}
+<script>const RAW_LOG = {{ log_content | tojson }};</script>
+{% else %}
+<script>const RAW_LOG = null;</script>
+{% endif %}
+<script>
+  const MATCH_ID     = {{ match.id }};
+  const BOT1_NAME    = {{ match.bot1 | tojson }};
+  const BOT2_NAME    = {{ match.bot2 | tojson }};
+  const INIT_STATUS  = {{ match.status | tojson }};
+  const BOT1_COLOR   = '#22c55e';
+  const BOT2_COLOR   = '#3b82f6';
+</script>
+
+{% endblock %}
+
+
+{% block scripts %}
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+
+<script>
+// ── Log colorization ────────────────────────────────────────────
+function escapeHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function colorLine(line) {
+  if (!line.trim()) return '<span class="block h-2"></span>';
+  let cls = 'text-[#6e7681]', prefix = '';
+
+  if (/^Round #\d+/.test(line))        { cls = 'text-yellow-400 font-semibold'; prefix = '── '; }
+  else if (/^Final/.test(line))        { cls = 'text-white font-bold';          prefix = '══ '; }
+  else if (/awarded/.test(line))       { cls = /awarded -/.test(line) ? 'text-red-400' : 'text-green-400'; }
+  else if (/folds/.test(line))         { cls = 'text-orange-400'; }
+  else if (/calls/.test(line))         { cls = 'text-blue-400'; }
+  else if (/raises|bets/.test(line))   { cls = 'text-purple-400'; }
+  else if (/checks/.test(line))        { cls = 'text-[#8b949e]'; }
+  else if (/posts the blind/.test(line)){ cls = 'text-[#6e7681]'; }
+  else if (/dealt/.test(line))         { cls = 'text-cyan-400'; }
+  else if (/shows/.test(line))         { cls = 'text-indigo-400'; }
+  else if (/Flop|Turn|River/.test(line)){ cls = 'text-amber-300 font-medium'; }
+
+  return `<span class="block ${cls}">${prefix}${escapeHtml(line)}</span>`;
+}
+
+function isSummaryLine(line) {
+  return !line.trim() ||
+         line.startsWith('Round #') ||
+         line.startsWith('Final') ||
+         line.includes('awarded') ||
+         /Flop|Turn|River/.test(line);
+}
+
+let summaryMode = true;
+
+function renderLog(logText) {
+  const lines = logText.split('\n');
+  const toShow = summaryMode ? lines.filter(isSummaryLine) : lines;
+  document.getElementById('log-lines').innerHTML = toShow.map(colorLine).join('');
+  // Scroll to top
+  document.getElementById('log-viewer').scrollTop = 0;
+}
+
+function toggleFilter() {
+  summaryMode = !summaryMode;
+  if (RAW_LOG) renderLog(RAW_LOG);
+  document.getElementById('filter-btn').textContent =
+    summaryMode ? 'Show full log' : 'Summary only';
+}
+
+function copyLog() {
+  const src = RAW_LOG || '';
+  navigator.clipboard.writeText(src).then(() => showToast('Log copied!', 'success'));
+}
+
+
+// ── Bankroll chart ──────────────────────────────────────────────
+let chart = null;
+
+function parseBankrollData(logText) {
+  const lines = logText.split('\n');
+  const rounds = [];
+  for (const line of lines) {
+    const m = line.match(/^Round #(\d+)(.*)/);
+    if (!m) continue;
+    const round = parseInt(m[1]);
+    const entries = [...m[2].matchAll(/, (\S+) \((-?\d+)\)/g)];
+    const entry = { round };
+    for (const [, name, delta] of entries) entry[name] = parseInt(delta);
+    rounds.push(entry);
+  }
+  return rounds;
+}
+
+function buildChart(logText) {
+  const rounds = parseBankrollData(logText);
+  if (!rounds.length) return;
+
+  // Downsample to ≤150 points for performance
+  const step = Math.max(1, Math.floor(rounds.length / 150));
+  const sampled = rounds.filter((_, i) => i % step === 0);
+
+  const labels    = sampled.map(r => r.round);
+  const bot1Data  = sampled.map(r => r[BOT1_NAME] ?? null);
+  const bot2Data  = sampled.map(r => r[BOT2_NAME] ?? null);
+
+  const ctx = document.getElementById('bankroll-chart').getContext('2d');
+  chart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: BOT1_NAME,
+          data: bot1Data,
+          borderColor: BOT1_COLOR,
+          backgroundColor: 'rgba(34,197,94,0.08)',
+          borderWidth: 2,
+          pointRadius: 0,
+          fill: true,
+          tension: 0.3,
+        },
+        {
+          label: BOT2_NAME,
+          data: bot2Data,
+          borderColor: BOT2_COLOR,
+          backgroundColor: 'rgba(59,130,246,0.08)',
+          borderWidth: 2,
+          pointRadius: 0,
+          fill: true,
+          tension: 0.3,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: {
+          labels: { color: '#8b949e', usePointStyle: true, pointStyleWidth: 10 }
+        },
+        tooltip: {
+          backgroundColor: '#1c2333',
+          borderColor: '#21262d',
+          borderWidth: 1,
+          titleColor: '#e6edf3',
+          bodyColor: '#8b949e',
+          callbacks: {
+            label: ctx => ` ${ctx.dataset.label}: ${ctx.parsed.y >= 0 ? '+' : ''}${ctx.parsed.y} chips`
+          }
+        }
+      },
+      scales: {
+        x: {
+          grid: { color: '#21262d' },
+          ticks: { color: '#6e7681', maxTicksLimit: 10 },
+          title: { display: true, text: 'Round', color: '#6e7681', font: { size: 11 } },
+        },
+        y: {
+          grid: { color: '#21262d' },
+          ticks: {
+            color: '#6e7681',
+            callback: v => (v >= 0 ? '+' : '') + v,
+          },
+          title: { display: true, text: 'Net chips', color: '#6e7681', font: { size: 11 } },
+        }
+      }
+    }
+  });
+}
+
+
+// ── Live polling (when match is running) ────────────────────────
+let pollInterval   = null;
+let liveStartTime  = Date.now();
+let liveTimerInt   = null;
+let currentLogText = null;
+
+function startElapsedTimer() {
+  liveTimerInt = setInterval(() => {
+    const s = Math.round((Date.now() - liveStartTime) / 1000);
+    const el = document.getElementById('elapsed-time');
+    if (el) el.textContent = s < 60 ? `${s}s` : `${Math.floor(s/60)}m ${s%60}s`;
+  }, 1000);
+}
+
+function updateLiveLogTail(logText) {
+  // Show last ~8 meaningful lines
+  const lines = logText.split('\n').filter(l => l.trim()).slice(-8);
+  const el = document.getElementById('live-log-tail');
+  if (el) el.innerHTML = lines.map(colorLine).join('');
+}
+
+function animateCards() {
+  const suits = ['♠','♥','♦','♣'];
+  const el = document.getElementById('card-anim');
+  if (!el) return;
+  let i = 0;
+  setInterval(() => {
+    el.textContent = [0,1,2,3].map(j => suits[(i+j) % 4]).join(' ');
+    i++;
+  }, 600);
+}
+
+async function pollLiveLog() {
+  try {
+    const res = await fetch(`/api/match/${MATCH_ID}/log`);
+    const data = await res.json();
+
+    if (data.log) {
+      currentLogText = data.log;
+      updateLiveLogTail(data.log);
+    }
+
+    // Check if match has now completed
+    const statusRes = await fetch('/api/status');
+    const statusData = await statusRes.json();
+    const thisMatch = statusData.recent_matches.find(m => m.id === MATCH_ID);
+
+    if (thisMatch && thisMatch.status !== 'running') {
+      stopLivePolling();
+      transitionToComplete(thisMatch, data.log);
+    }
+  } catch (e) { /* transient */ }
+}
+
+function stopLivePolling() {
+  if (pollInterval)  { clearInterval(pollInterval);  pollInterval  = null; }
+  if (liveTimerInt)  { clearInterval(liveTimerInt);  liveTimerInt  = null; }
+}
+
+function transitionToComplete(matchData, logText) {
+  // Update header
+  const d1 = matchData.bot1_delta, d2 = matchData.bot2_delta;
+  const cls = v => v > 0 ? 'chip-pos' : v < 0 ? 'chip-neg' : 'chip-zero';
+
+  document.getElementById('delta1').className = `text-2xl font-bold ${cls(d1)}`;
+  document.getElementById('delta1').textContent = (d1 >= 0 ? '+' : '') + d1 + ' chips';
+
+  document.getElementById('delta2').className = `text-2xl font-bold ${cls(d2)}`;
+  document.getElementById('delta2').textContent = (d2 >= 0 ? '+' : '') + d2 + ' chips';
+
+  document.getElementById('rounds-played').textContent =
+    matchData.num_rounds ? `${matchData.num_rounds} rounds` : '';
+
+  const winner = matchData.winner;
+  document.getElementById('result-badge').innerHTML = winner
+    ? `<div class="px-4 py-2 rounded-lg text-sm font-semibold badge-complete">${winner} wins</div>`
+    : `<div class="px-4 py-2 rounded-lg text-sm font-semibold badge-idle">Draw</div>`;
+
+  document.getElementById('status-cell').innerHTML =
+    `<span class="px-2 py-0.5 rounded text-xs font-medium badge-complete">complete</span>`;
+  document.getElementById('rounds-cell').textContent = matchData.num_rounds || '—';
+
+  // Hide live, show complete
+  document.getElementById('live-section').classList.add('hidden');
+  const completeSection = document.getElementById('complete-section');
+  completeSection.classList.remove('hidden');
+
+  if (logText) {
+    renderLog(logText);
+    buildChart(logText);
+  }
+
+  showToast('Match complete!', 'success');
+}
+
+
+// ── Init ────────────────────────────────────────────────────────
+if (INIT_STATUS === 'running') {
+  animateCards();
+  startElapsedTimer();
+  pollInterval = setInterval(pollLiveLog, 2000);
+  pollLiveLog();
+}
+
+if (RAW_LOG) {
+  renderLog(RAW_LOG);
+  buildChart(RAW_LOG);
+}
+</script>
+{% endblock %}
